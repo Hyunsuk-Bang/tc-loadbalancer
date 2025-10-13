@@ -30,15 +30,19 @@ A Linux eBPF-based load balancer prototype. This project is currently under deve
 
 ## Performance
 #### Direct connection between two hosts
+```
 - - - - - - - - - - - - - - - - - - - - - - - - -
 [ ID] Interval           Transfer     Bitrate         Retr
 [  5]   0.00-10.00  sec  24.9 GBytes  21.4 Gbits/sec  3267             sender
 [  5]   0.00-10.00  sec  24.9 GBytes  21.4 Gbits/sec                  receiver
+```
 
 #### with tc-LB
+```
 [ ID] Interval           Transfer     Bitrate         Retr
 [  5]   0.00-10.00  sec  20.5 GBytes  17.6 Gbits/sec  655             sender
 [  5]   0.00-10.00  sec  20.5 GBytes  17.6 Gbits/sec                  receiver
+```
 
 ## Requirements
 - Linux with eBPF support
