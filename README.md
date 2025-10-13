@@ -24,6 +24,11 @@ A Linux eBPF-based load balancer prototype. This project is currently under deve
 - [ ] IPv6 support
 - [ ] support for encapsulation (VXLAN, VLAN)
 
+## DEMO (POC)
+![Screen Recording 2025-10-12 at 7 40 04 PM](https://github.com/user-attachments/assets/f92526d6-423c-495b-acc7-47dbdbd69446)
+
+
+
 ## Requirements
 - Linux with eBPF support
 - Go
