@@ -19,10 +19,11 @@ A Linux eBPF-based load balancer prototype. This project is currently under deve
 - [ ] TCP state tracker
 
 ## Next Steps / TODO
-- [ ] Logic for select backend
+- [ ] Logic for backend selection (rr, Least connection and etc)
 - [ ] Ensures that all packets belonging to the same TCP connection are consistently forwarded to the same backend server
 - [ ] IPv6 support
 - [ ] support for encapsulation (VXLAN, VLAN)
+- [ ] Add weighing functionality, which could be useful for canary deployment and replacing backend node for HW failure
 
 ## DEMO (POC)
 ![Screen Recording 2025-10-12 at 7 40 04 PM](https://github.com/user-attachments/assets/f92526d6-423c-495b-acc7-47dbdbd69446)
