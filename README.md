@@ -1,14 +1,17 @@
 # tc-loadbalancer
 A Linux eBPF-based load balancer prototype. This project is currently under development and not yet complete.
+<img width="541" height="518" alt="Untitled Diagram drawio" src="https://github.com/user-attachments/assets/db44c56d-3f66-4502-8f3b-064f272fdc5d" />
 
 ## Project Structure
 - `main.go`: Main Go application entry point
 - `loadbalancer.bpf.c`: eBPF program source code
 - `lb.h`: Shared header for eBPF and Go
-- `bpf_bpfeb.go`, `bpf_bpfel.go`: Auto-generated Go bindings for eBPF
 - `makefile`: Build instructions
 - `go.mod`, `go.sum`: Go module files
 
+## Progress
+- [x] SNAT / DNAT
+- [x] Checksum calculation
 
 ## Next Steps / TODO
 - [ ] Logic for select backend
@@ -16,14 +19,9 @@ A Linux eBPF-based load balancer prototype. This project is currently under deve
 - [ ] Add IPv6 support
 - [ ] Add support for encapsulation (VXLAN, VLAN)
 
-## Progress
-- [ ] SNAT / DNAT
-- [ ] Checksum calculation
-
 ## Requirements
 - Linux with eBPF support
-- Go (>=1.18 recommended)
-- clang/llvm for eBPF compilation
+- Go
 
 ## License
 TBD
