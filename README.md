@@ -29,20 +29,34 @@ A Linux eBPF-based load balancer prototype. This project is currently under deve
 ![Screen Recording 2025-10-12 at 7 40 04 PM](https://github.com/user-attachments/assets/f92526d6-423c-495b-acc7-47dbdbd69446)
 
 ## Performance
-#### Direct connection between two hosts
+#### Direct connection between two hosts (MTU 1500)
 ```
-- - - - - - - - - - - - - - - - - - - - - - - - -
 [ ID] Interval           Transfer     Bitrate         Retr
 [  5]   0.00-10.00  sec  24.9 GBytes  21.4 Gbits/sec  3267             sender
 [  5]   0.00-10.00  sec  24.9 GBytes  21.4 Gbits/sec                  receiver
 ```
 
-#### with tc-LB
+#### with tc-LB (MTU 1500)
 ```
 [ ID] Interval           Transfer     Bitrate         Retr
 [  5]   0.00-10.00  sec  20.5 GBytes  17.6 Gbits/sec  655             sender
 [  5]   0.00-10.00  sec  20.5 GBytes  17.6 Gbits/sec                  receiver
 ```
+
+#### Direct connection between two hosts (MTU 9000)
+```
+[ ID] Interval           Transfer     Bitrate         Retr
+[  5]   0.00-10.00  sec  42.5 GBytes  36.5 Gbits/sec    0             sender
+[  5]   0.00-10.00  sec  42.5 GBytes  36.5 Gbits/sec                  receiver
+```
+
+#### with tc-LB (MTU 9000)
+```
+[ ID] Interval           Transfer     Bitrate         Retr
+[  5]   0.00-10.00  sec  28.8 GBytes  24.7 Gbits/sec    1             sender
+[  5]   0.00-10.00  sec  28.8 GBytes  24.7 Gbits/sec                  receiver
+```
+
 
 ## Requirements
 - Linux with eBPF support
