@@ -16,7 +16,7 @@ import (
 	"github.com/cilium/ebpf/link"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -tags linux bpf loadbalancer.bpf.c
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -tags linux lb bpf/lb.bpf.c
 
 func ipToUint32(ipStr string) uint32 {
 	ip := net.ParseIP(ipStr).To4()
@@ -73,8 +73,8 @@ func main() {
 	}
 
 	// Load pre-compiled programs into the kernel.
-	objs := bpfObjects{}
-	if err := loadBpfObjects(&objs, nil); err != nil {
+	objs := lbObjects{}
+	if err := loadLbObjects(&objs, nil); err != nil {
 		log.Fatalf("loading objects: %s", err)
 	}
 	defer objs.Close()
@@ -105,7 +105,7 @@ func main() {
 			log.Printf("Backend %s:%d is down, skipping...", b.IP, b.Port)
 			continue
 		}
-		e := bpfEndpoint{
+		e := lbEndpoint{
 			Ip:      ipToUint32(b.IP),
 			Port:    uint16(b.Port),
 			Alive:   boolToUint8(alive),
@@ -139,8 +139,8 @@ func main() {
 			// clear stdout
 			fmt.Print("\033[H\033[2J")
 			tcpStateIter := objs.TcpStateMap.Iterate()
-			bpfTuple := bpfTuple{}
-			bpfTcpState := bpfTcpState{}
+			bpfTuple := lbTuple{}
+			bpfTcpState := lbTcpState{}
 			for tcpStateIter.Next(&bpfTuple, &bpfTcpState) {
 				log.Printf("%s:%s -> %s:%s state=%s (last_ack: %d)\n",
 					intToIP(bpfTuple.SrcIp), portToStr(bpfTuple.SrcPort),
