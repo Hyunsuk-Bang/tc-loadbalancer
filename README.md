@@ -1,6 +1,7 @@
 # tc-loadbalancer
-A Linux eBPF-based load balancer prototype. This project is currently under development and not yet complete.
+A Linux eBPF-based load balancer prototype. This project is currently under development and not yet complete. 
 
+ Currently the load balancer creates two sockets per client (client→LB and LB→backend) and forwards data with Go’s io.Copy. That works in most cases, but it wastes file descriptors and CPU for memory copies. By using eBPF to redirect packets in-kernel we can avoid the extra socket pair and user-space copying, reducing latency and resource usage. 
 
 <img width="541" height="518" alt="Untitled Diagram drawio" src="https://github.com/user-attachments/assets/db44c56d-3f66-4502-8f3b-064f272fdc5d" />
 
@@ -12,6 +13,7 @@ A Linux eBPF-based load balancer prototype. This project is currently under deve
 - `go.mod`, `go.sum`: Go module files
 
 ## DONE
+- [x] userspace level loadbalancer
 - [x] SNAT / DNAT
 - [x] Checksum calculation
 
