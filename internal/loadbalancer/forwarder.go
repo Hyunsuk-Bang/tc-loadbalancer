@@ -56,5 +56,5 @@ func (f *Forwarder) Do() {
 	if f.Server != nil {
 		_ = f.Server.Close()
 	}
-	log.Info().Str("component", "forwarder").Msg("forwarding finished")
+	log.Debug().Str("component", "forwarder").Msg("forwarding finished")
 }

@@ -1,0 +1,15 @@
+loadbalancer: 
+  listener:
+    ip: 192.168.1.85
+    port: 31080
+    protocol: tcp
+  endpoints:
+  - ip: 192.168.1.82
+    port: 31080
+    protocol: tcp
+  - ip: 192.168.1.83
+    port: 31080
+    protocol: tcp
+  - ip: 192.168.1.84
+    port: 31080
+    protocol: tcp

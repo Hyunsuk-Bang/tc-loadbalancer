@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"flag"
+	"loadbalancer/internal/config"
 	"loadbalancer/internal/loadbalancer"
 	"net"
 	"os"
@@ -34,26 +35,17 @@ func main() {
 	}()
 
 	rrp := loadbalancer.NewRoundRobinPool()
-	rrp.Register(&loadbalancer.Endpoint{
-		IP:       net.ParseIP("192.168.1.82"),
-		Port:     31080,
-		Protocol: "tcp",
-	})
-	rrp.Register(&loadbalancer.Endpoint{
-		IP:       net.ParseIP("192.168.1.83"),
-		Port:     31080,
-		Protocol: "tcp",
-	})
-	rrp.Register(&loadbalancer.Endpoint{
-		IP:       net.ParseIP("192.168.1.84"),
-		Port:     31080,
-		Protocol: "tcp",
-	})
-
+	cfg, err := config.ParseFile("example/example.yaml")
+	if err != nil {
+		log.Panic().Err(err).Msg("failed parsing yaml")
+	}
+	for _, ep := range cfg.Endpoints {
+		rrp.Register(ep)
+	}
 	prbr := loadbalancer.NewProber(ctx, rrp)
 	go prbr.Start()
 
-	listner, err := net.Listen("tcp", "192.168.1.85:31080")
+	listner, err := net.Listen(cfg.Listener.Protocol, cfg.Listener.String())
 	if err != nil {
 		log.Panic().Err(err).Msg("failed creating listener")
 	}
