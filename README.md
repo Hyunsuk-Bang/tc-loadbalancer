@@ -43,6 +43,14 @@ A Linux eBPF-based load balancer prototype. This project is currently under deve
 [  5]   0.00-10.00  sec  20.5 GBytes  17.6 Gbits/sec                  receiver
 ```
 
+#### Userspace LB using io.Copy (MTU 1500)
+```
+[ ID] Interval           Transfer     Bitrate         Retr
+[  5]   0.00-10.00  sec  14.4 GBytes  12.4 Gbits/sec  945             sender
+[  5]   0.00-10.00  sec  14.4 GBytes  12.4 Gbits/sec                  receiver 
+```
+
+
 #### Direct connection between two hosts (MTU 9000)
 ```
 [ ID] Interval           Transfer     Bitrate         Retr
@@ -55,6 +63,13 @@ A Linux eBPF-based load balancer prototype. This project is currently under deve
 [ ID] Interval           Transfer     Bitrate         Retr
 [  5]   0.00-10.00  sec  28.8 GBytes  24.7 Gbits/sec    1             sender
 [  5]   0.00-10.00  sec  28.8 GBytes  24.7 Gbits/sec                  receiver
+```
+
+#### Userspace LB using io.Copy (MTU 1500) 
+```
+[ ID] Interval           Transfer     Bitrate         Retr
+[  5]   0.00-10.00  sec  21.6 GBytes  18.5 Gbits/sec    7             sender
+[  5]   0.00-10.00  sec  21.5 GBytes  18.5 Gbits/sec                  receiver
 ```
 
 
