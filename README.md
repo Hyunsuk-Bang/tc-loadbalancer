@@ -27,6 +27,9 @@ A Linux eBPF-based load balancer prototype. This project is currently under deve
 - [ ] support for encapsulation (VXLAN, VLAN)
 - [ ] Add weighing functionality, which could be useful for canary deployment and replacing backend node for HW failure
 
+## Future
+- [] Implement more sophisticated load balancing algorithm (Load aware, maglev hashing, and etc)
+
 ## DEMO (POC)
 ![Screen Recording 2025-10-12 at 7 40 04 PM](https://github.com/user-attachments/assets/f92526d6-423c-495b-acc7-47dbdbd69446)
 
