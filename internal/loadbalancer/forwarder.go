@@ -18,6 +18,8 @@ type Forwarder struct {
 // efficiently forward data and attempts a graceful shutdown.
 func (f *Forwarder) Do() {
 	var wg sync.WaitGroup
+	log.Debug().Str("client", f.Client.RemoteAddr().String()).Str("server", f.Server.RemoteAddr().String()).Msg("forwarding")
+
 	wg.Add(2)
 
 	copyDirection := func(dst net.Conn, src net.Conn, direction string) {

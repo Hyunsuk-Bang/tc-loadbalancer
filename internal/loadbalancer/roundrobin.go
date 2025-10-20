@@ -2,6 +2,7 @@ package loadbalancer
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -37,14 +38,17 @@ func (rrp *RoundRobinPool) Register(ep *Endpoint) error {
 func (rrp *RoundRobinPool) Next() *Endpoint {
 	rrp.mu.Lock()
 	defer rrp.mu.Unlock()
-	rrp.counter += 1
-	idx := rrp.counter % uint64(len(rrp.endpoints))
-	ep := rrp.endpoints[idx]
-
-	if epHealth, ok := rrp.endpointHealth[ep]; !ok || !epHealth.health {
-
+	var ep *Endpoint
+	var eh *EndpointHealth
+	for {
+		idx := rrp.counter % uint64(len(rrp.endpoints))
+		ep = rrp.endpoints[idx]
+		eh = rrp.endpointHealth[ep]
+		rrp.counter++
+		if eh.health {
+			break
+		}
 	}
-
 	return ep
 }
 
@@ -62,4 +66,14 @@ func (rrp *RoundRobinPool) SetEndpointHealth(ep *Endpoint, health bool) {
 	} else {
 		eh.health = health
 	}
+}
+
+func (rpp *RoundRobinPool) String() string {
+	rpp.mu.Lock()
+	defer rpp.mu.Unlock()
+	var sb strings.Builder
+	for ep, health := range rpp.endpointHealth {
+		sb.WriteString(fmt.Sprintf("%s: %v\n", ep.String(), health.health))
+	}
+	return sb.String()
 }
