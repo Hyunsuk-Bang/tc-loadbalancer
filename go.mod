@@ -1,4 +1,4 @@
-module loadbalancer
+module lb
 
 go 1.24.6
 

@@ -8,7 +8,7 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-type Forwarder struct {
+type SockForwarder struct {
 	Client net.Conn
 	Server net.Conn
 }
@@ -16,7 +16,7 @@ type Forwarder struct {
 // Do starts bidirectional forwarding between Client and Server. It returns once
 // both directions have finished and connections are closed. It uses io.Copy to
 // efficiently forward data and attempts a graceful shutdown.
-func (f *Forwarder) Do() {
+func (f *SockForwarder) Do() {
 	var wg sync.WaitGroup
 	log.Debug().Str("client", f.Client.RemoteAddr().String()).Str("server", f.Server.RemoteAddr().String()).Msg("forwarding")
 

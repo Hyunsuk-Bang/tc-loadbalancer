@@ -4,26 +4,29 @@ package main
 import (
 	"context"
 	"flag"
-	"loadbalancer/internal/config"
-	"loadbalancer/internal/loadbalancer"
-	"net"
+	"lb/internal/loadbalancer"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 
 	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
 
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -tags linux lb bpf/lb.bpf.c
 
 func main() {
 	debug := flag.Bool("debug", false, "sets log level to debug")
+	bpfForwarder := flag.Bool("bpf", false, "use bpf for forwarding")
+	configFile := flag.String("config", "example/example.yaml", "config files")
 	flag.Parse()
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 	if *debug {
 		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	}
+
+	lbCfg, err := loadbalancer.ParseFile(*configFile)
+	if err != nil {
+		panic(err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -34,61 +37,9 @@ func main() {
 		cancel()
 	}()
 
-	rrp := loadbalancer.NewRoundRobinPool()
-	cfg, err := config.ParseFile("example/example.yaml")
-	if err != nil {
-		log.Panic().Err(err).Msg("failed parsing yaml")
+	if !*bpfForwarder {
+		loadbalancer.RunSocketLB(ctx, lbCfg)
+	} else {
+		loadbalancer.RunTCLB(ctx, lbCfg)
 	}
-	for _, ep := range cfg.Endpoints {
-		rrp.Register(ep)
-	}
-	prbr := loadbalancer.NewProber(ctx, rrp)
-	go prbr.Start()
-
-	listner, err := net.Listen(cfg.Listener.Protocol, cfg.Listener.String())
-	if err != nil {
-		log.Panic().Err(err).Msg("failed creating listener")
-	}
-
-	go func() {
-		<-ctx.Done()
-		log.Info().Msg("shutting down listener")
-		listner.Close()
-	}()
-
-	var wg sync.WaitGroup
-	acceptLoop := func() {
-		for {
-			passiveConn, err := listner.Accept()
-			if err != nil {
-				log.Error().Err(err)
-				return
-			}
-			wg.Add(1)
-			go func(pc net.Conn) {
-				defer wg.Done()
-				ep := rrp.Next()
-				activeConn, err := net.Dial(ep.Protocol, ep.String())
-				if err != nil {
-					log.Error().Err(err).Msg("failed dialing active connection")
-					pc.Close()
-					return
-				}
-
-				fwd := loadbalancer.Forwarder{
-					Client: pc,
-					Server: activeConn,
-				}
-				fwd.Do()
-			}(passiveConn)
-		}
-	}
-
-	go acceptLoop()
-
-	// Wait for cancellation and for in-flight handlers to finish.
-	<-ctx.Done()
-	log.Info().Msg("shutdown requested; waiting for handlers to finish")
-	wg.Wait()
-	log.Info().Msg("shutdown complete")
 }

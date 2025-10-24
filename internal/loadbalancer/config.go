@@ -1,4 +1,4 @@
-package config
+package loadbalancer
 
 import (
 	"fmt"
@@ -6,16 +6,18 @@ import (
 	"net"
 	"os"
 
-	lb "loadbalancer/internal/loadbalancer"
-
 	"gopkg.in/yaml.v3"
 )
 
-// Config represents the top-level configuration derived from example.yaml
-// which has a `loadbalancer` mapping containing a `listener` and `endpoints`.
+const (
+	loadBalancerRoundRobin = "round-robin"
+	loadBalancerRandom     = "random"
+)
+
 type Config struct {
-	Listener  *lb.Endpoint
-	Endpoints []*lb.Endpoint
+	Listener  *Endpoint
+	Kind      string
+	Endpoints []*Endpoint
 }
 
 type rawListener struct {
@@ -32,6 +34,7 @@ type rawEndpoint struct {
 
 type rawLoadbalancer struct {
 	Listener  rawListener   `yaml:"listener"`
+	Kind      string        `yaml:kind`
 	Endpoints []rawEndpoint `yaml:"endpoints"`
 }
 
@@ -50,6 +53,15 @@ func Parse(r io.Reader) (*Config, error) {
 
 	lbRaw := rc.Loadbalancer
 	cfg := &Config{}
+	if lbRaw.Kind == "" {
+		cfg.Kind = loadBalancerRoundRobin
+	} else {
+		cfg.Kind = lbRaw.Kind
+	}
+
+	if cfg.Kind != loadBalancerRandom && cfg.Kind != loadBalancerRoundRobin {
+		return nil, fmt.Errorf("invalid loadbalancer")
+	}
 
 	// Validate listener
 	if lbRaw.Listener.IP == "" {
@@ -66,13 +78,13 @@ func Parse(r io.Reader) (*Config, error) {
 	if proto == "" {
 		proto = "tcp"
 	}
-	cfg.Listener = &lb.Endpoint{
+	cfg.Listener = &Endpoint{
 		IP:       lip,
 		Port:     lbRaw.Listener.Port,
 		Protocol: proto,
 	}
 
-	eps := make([]*lb.Endpoint, 0, len(lbRaw.Endpoints))
+	eps := make([]*Endpoint, 0, len(lbRaw.Endpoints))
 	for i, re := range lbRaw.Endpoints {
 		if re.IP == "" {
 			return nil, fmt.Errorf("endpoints[%d].ip is required", i)
@@ -88,7 +100,7 @@ func Parse(r io.Reader) (*Config, error) {
 		if proto == "" {
 			proto = "tcp"
 		}
-		eps = append(eps, &lb.Endpoint{
+		eps = append(eps, &Endpoint{
 			IP:       ip,
 			Port:     re.Port,
 			Protocol: proto,
