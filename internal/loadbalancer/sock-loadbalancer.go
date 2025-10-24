@@ -21,13 +21,6 @@ func RunSocketLB(ctx context.Context, cfg *Config) {
 	if err != nil {
 		log.Panic().Err(err).Msg("failed creating listener")
 	}
-
-	go func() {
-		<-ctx.Done()
-		log.Info().Msg("shutting down listener")
-		listner.Close()
-	}()
-
 	var wg sync.WaitGroup
 	acceptLoop := func() {
 		for {
@@ -62,5 +55,6 @@ func RunSocketLB(ctx context.Context, cfg *Config) {
 	<-ctx.Done()
 	log.Info().Msg("shutdown requested; waiting for handlers to finish")
 	wg.Wait()
+	listner.Close()
 	log.Info().Msg("shutdown complete")
 }
