@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	loadBalancerRoundRobin = "round-robin"
-	loadBalancerRandom     = "random"
+	loadBalancerKindRoundRobin = "round-robin"
+	loadBalancerKindRandom     = "random"
 )
 
 type Config struct {
@@ -54,12 +54,12 @@ func Parse(r io.Reader) (*Config, error) {
 	lbRaw := rc.Loadbalancer
 	cfg := &Config{}
 	if lbRaw.Kind == "" {
-		cfg.Kind = loadBalancerRoundRobin
+		cfg.Kind = loadBalancerKindRoundRobin
 	} else {
 		cfg.Kind = lbRaw.Kind
 	}
 
-	if cfg.Kind != loadBalancerRandom && cfg.Kind != loadBalancerRoundRobin {
+	if cfg.Kind != loadBalancerKindRandom && cfg.Kind != loadBalancerKindRoundRobin {
 		return nil, fmt.Errorf("invalid loadbalancer")
 	}
 

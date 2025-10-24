@@ -9,12 +9,20 @@ import (
 )
 
 func RunSocketLB(ctx context.Context, cfg *Config) {
-	rrp := NewRoundRobinPool()
+	var pool Pool
+	switch cfg.Kind {
+	case loadBalancerKindRandom:
+		pool = NewRandomPool()
+	case loadBalancerKindRoundRobin:
+		pool = NewRoundRobinPool()
+	default:
+		log.Warn().Msg("invalid loadbalancing strategy. Using round-robin")
+	}
 
 	for _, ep := range cfg.Endpoints {
-		rrp.Register(ep)
+		pool.Register(ep)
 	}
-	prbr := NewProber(ctx, rrp)
+	prbr := NewProber(ctx, pool)
 	go prbr.Start()
 
 	listner, err := net.Listen(cfg.Listener.Protocol, cfg.Listener.String())
@@ -32,7 +40,7 @@ func RunSocketLB(ctx context.Context, cfg *Config) {
 			wg.Add(1)
 			go func(pc net.Conn) {
 				defer wg.Done()
-				ep := rrp.Next()
+				ep := pool.Next()
 				activeConn, err := net.Dial(ep.Protocol, ep.String())
 				if err != nil {
 					log.Error().Err(err).Msg("failed dialing active connection")

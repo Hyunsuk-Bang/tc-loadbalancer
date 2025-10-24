@@ -19,6 +19,7 @@ func main() {
 	bpfForwarder := flag.Bool("bpf", false, "use bpf for forwarding")
 	configFile := flag.String("config", "example/example.yaml", "config files")
 	flag.Parse()
+
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 	if *debug {
 		zerolog.SetGlobalLevel(zerolog.DebugLevel)
