@@ -16,8 +16,10 @@ A Linux eBPF-based load balancer prototype. This project is currently under deve
 - [x] userspace level loadbalancer
 - [x] SNAT / DNAT
 - [x] Checksum calculation
+- [X] Userspace LB with Round Robin and Rabdom Pool
 
 ## In Progress
+- [ ] Change bpf code to support IPv4 and IPv6
 - [ ] TCP state tracker
 
 ## Next Steps / TODO
