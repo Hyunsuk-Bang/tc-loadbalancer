@@ -1,7 +1,7 @@
 # tc-loadbalancer
-A Linux eBPF-based load balancer prototype. This project is currently under development and not yet complete. 
+A Linux eBPF-based load balancer prototype. This project is currently under development and not yet complete.
 
- Currently the load balancer creates two sockets per client (client→LB and LB→backend) and forwards data with Go’s io.Copy. That works in most cases, but it wastes file descriptors and CPU for memory copies. By using eBPF to redirect packets in-kernel we can avoid the extra socket pair and user-space copying, reducing latency and resource usage. 
+ Currently the load balancer creates two sockets per client (client→LB and LB→backend) and forwards data with Go’s io.Copy. That works in most cases, but it wastes file descriptors and CPU for memory copies. By using eBPF to redirect packets in-kernel we can avoid the extra socket pair and user-space copying, reducing latency and resource usage.
 
 <img width="541" height="518" alt="Untitled Diagram drawio" src="https://github.com/user-attachments/assets/db44c56d-3f66-4502-8f3b-064f272fdc5d" />
 
@@ -17,15 +17,14 @@ A Linux eBPF-based load balancer prototype. This project is currently under deve
 - [x] SNAT / DNAT
 - [x] Checksum calculation
 - [X] Userspace LB with Round Robin and Rabdom Pool
+- [X] Change bpf code to support IPv4 and IPv6
 
 ## In Progress
-- [ ] Change bpf code to support IPv4 and IPv6
 - [ ] TCP state tracker
 
 ## Next Steps / TODO
 - [ ] Logic for backend selection (rr, Least connection and etc)
 - [ ] Ensures that all packets belonging to the same TCP connection are consistently forwarded to the same backend server
-- [ ] IPv6 support
 - [ ] support for encapsulation (VXLAN, VLAN)
 - [ ] Add weighing functionality, which could be useful for canary deployment and replacing backend node for HW failure
 
@@ -54,7 +53,7 @@ A Linux eBPF-based load balancer prototype. This project is currently under deve
 ```
 [ ID] Interval           Transfer     Bitrate         Retr
 [  5]   0.00-10.00  sec  14.4 GBytes  12.4 Gbits/sec  945             sender
-[  5]   0.00-10.00  sec  14.4 GBytes  12.4 Gbits/sec                  receiver 
+[  5]   0.00-10.00  sec  14.4 GBytes  12.4 Gbits/sec                  receiver
 ```
 
 
@@ -72,7 +71,7 @@ A Linux eBPF-based load balancer prototype. This project is currently under deve
 [  5]   0.00-10.00  sec  28.8 GBytes  24.7 Gbits/sec                  receiver
 ```
 
-#### Userspace LB using io.Copy (MTU 1500) 
+#### Userspace LB using io.Copy (MTU 9000)
 ```
 [ ID] Interval           Transfer     Bitrate         Retr
 [  5]   0.00-10.00  sec  21.6 GBytes  18.5 Gbits/sec    7             sender
