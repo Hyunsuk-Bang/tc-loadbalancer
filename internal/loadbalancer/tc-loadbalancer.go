@@ -48,15 +48,15 @@ func RunTCLB(ctx context.Context, cfg *Config) {
 	defer l.Close()
 
 	//TODO: inject load balancing strategy to ebpf map
-	for _, ep := range cfg.Endpoints {
+	for i, ep := range cfg.Endpoints {
 		log.Debug().Str("ep", ep.IP.String()).Msg("inserting ip")
 		lbEp := lbEndpoint{
 			Ip: struct {
 				_  structs.HostLayout
 				V6 lbIp6AddrT
 			}{
-				V6: ipv6ToUint32(ep.IP.To16()), // V6 with IPv4-mapped address
-				//V6: lbIp6AddrT{ipv4ToUint32(ep.IP), 0, 0, 0},
+				//V6: ipv6ToUint32(ep.IP.To16()), // V6 with IPv4-mapped address
+				V6: lbIp6AddrT{ipv4ToUint32(ep.IP), 0, 0, 0},
 			},
 			Port:  uint16(ep.Port),
 			Alive: 1,
@@ -66,6 +66,22 @@ func RunTCLB(ctx context.Context, cfg *Config) {
 		if err := pool.Put(lbEp.Ip, lbEp); err != nil {
 			log.Fatal().Err(err).Msg("failed to put map")
 		}
+		rrp := objs.RoundRobinPool
+		if err := rrp.Put(uint32(i), lbEp); err != nil {
+			log.Fatal().Err(err).Msg("failed to put map")
+		}
+	}
+
+	rrpCounterMap := objs.RoundRobinCounter
+	var zero uint32 = 0
+	if err := rrpCounterMap.Put(uint32(0), zero); err != nil {
+		log.Fatal().Err(err).Msg("failed to put round robin counter")
+	}
+
+	rrpSizeMap := objs.RoundRobinPoolSize
+	size := uint32(len(cfg.Endpoints))
+	if err := rrpSizeMap.Put(uint32(0), size); err != nil {
+		log.Fatal().Err(err).Msg("failed to put round robin pool size")
 	}
 
 	<-ctx.Done()

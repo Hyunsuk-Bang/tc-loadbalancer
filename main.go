@@ -15,7 +15,7 @@ import (
 func main() {
 	debug := flag.Bool("debug", false, "sets log level to debug")
 	bpfForwarder := flag.Bool("bpf", false, "use bpf for forwarding")
-	configFile := flag.String("config", "example/example-ipv6.yaml", "config files")
+	configFile := flag.String("config", "example/example.yaml", "config files")
 	flag.Parse()
 
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)

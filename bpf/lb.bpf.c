@@ -1,5 +1,5 @@
 //go:build ignore
-#include "lb.h"
+#include "lb.h" 
 
 SEC("tc")
 int lb_tc(struct __sk_buff *skb) {
@@ -50,8 +50,7 @@ int lb_tc(struct __sk_buff *skb) {
     }
 
     /* ignore SSH */
-    if (tpl.dst_port == bpf_htons(22) || tpl.src_port == bpf_htons(22))
-        return BPF_OK;
+    if (tpl.dst_port == bpf_htons(22) || tpl.src_port == bpf_htons(22)) return BPF_OK;
 
     /*
     src_ip is VIP
@@ -99,12 +98,32 @@ int lb_tc(struct __sk_buff *skb) {
         if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct ipv6hdr) + offsetof(struct tcphdr, check), old_daddr.v6[3], new_daddr.v6[3], BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
         return bpf_redirect_neigh(skb->ifindex, NULL, 0, 0);
     }
-    /* TODO
-        1. create TCP state machine
-        2. If TCP session is not closed, packet should be routed to same endpoint
-    */
-    if (ep) {
-        return BPF_OK;
+    // packet is from one of the pool endpoints to LB, However, no mapping found.
+    if (ep) return BPF_OK;
+
+    __u32 *rr_counter;
+    __u32 *rr_pool_size;
+    __u32 rr_counter_key = 0;
+    __u32 rr_pool_size_key = 0;
+    rr_counter = bpf_map_lookup_elem(&round_robin_counter, &rr_counter_key);
+    rr_pool_size = bpf_map_lookup_elem(&round_robin_pool_size, &rr_pool_size_key);
+    if (!rr_counter) {
+        return BPF_DROP;
+    }
+
+    if (!rr_pool_size || *rr_pool_size == 0) {
+        return BPF_DROP;
+    }
+    __u32 index = *rr_counter % *rr_pool_size;
+    struct endpoint *selected_ep = bpf_map_lookup_elem(&round_robin_pool, &index);
+    if (!selected_ep || !selected_ep->alive) {
+        return BPF_DROP;
+    }
+
+    __u32 new_rr_counter = *rr_counter + 1;
+    if (bpf_map_update_elem(&round_robin_counter, &rr_counter_key, &new_rr_counter, BPF_ANY) < 0) {
+        bpf_printk("Failed to update rr counter\n");
+        return BPF_DROP;
     }
 
     // Store expected resonse from one of the pool
@@ -113,7 +132,7 @@ int lb_tc(struct __sk_buff *skb) {
         ip = data + sizeof(struct ethhdr);
         if (revalidate_data(skb, &data, &data_end, (void **)&ip, sizeof(struct ethhdr), sizeof(struct iphdr)) < 0) return BPF_DROP;
         expected_response.protocol = tpl.protocol;
-        expected_response.src_ip.v4 = TARGET4.v4;
+        expected_response.src_ip.v4 = selected_ep->ip.v4;
         expected_response.dst_ip.v4 = tpl.dst_ip.v4;
         expected_response.src_port = tpl.dst_port;
         expected_response.dst_port = tpl.src_port;
@@ -121,7 +140,7 @@ int lb_tc(struct __sk_buff *skb) {
         old_saddr.v4 = ip->saddr;
         old_daddr.v4 = ip->daddr;
         new_saddr.v4 = ip->daddr;
-        new_daddr.v4 = TARGET4.v4;
+        new_daddr.v4 = selected_ep->ip.v4;
 
         ip->saddr = new_saddr.v4;
         ip->daddr = new_daddr.v4;
@@ -135,14 +154,14 @@ int lb_tc(struct __sk_buff *skb) {
         ip6 = data + sizeof(struct ethhdr);
         if (revalidate_data(skb, &data, &data_end, (void **)&ip6, sizeof(struct ethhdr), sizeof(struct ipv6hdr)) < 0) return BPF_DROP;
         expected_response.protocol = tpl.protocol;
-        __builtin_memcpy(expected_response.src_ip.v6, TARGET6.v6, sizeof(ip6->saddr.s6_addr32));
+        __builtin_memcpy(expected_response.src_ip.v6, selected_ep->ip.v6, sizeof(ip6->saddr.s6_addr32));
         __builtin_memcpy(expected_response.dst_ip.v6, ip6->daddr.s6_addr32, sizeof(ip6->daddr.s6_addr32));
         expected_response.src_port = tpl.dst_port;
         expected_response.dst_port = tpl.src_port;
         __builtin_memcpy(old_saddr.v6, ip6->saddr.s6_addr32, sizeof(ip6->saddr.s6_addr32));
         __builtin_memcpy(old_daddr.v6, ip6->daddr.s6_addr32, sizeof(ip6->daddr.s6_addr32));
         __builtin_memcpy(new_saddr.v6, ip6->daddr.s6_addr32, sizeof(ip6->daddr.s6_addr32));
-        __builtin_memcpy(new_daddr.v6, TARGET6.v6, sizeof(ip6->saddr.s6_addr32));
+        __builtin_memcpy(new_daddr.v6, selected_ep->ip.v6, sizeof(ip6->saddr.s6_addr32));
 
         if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct ipv6hdr) + offsetof(struct tcphdr, check), old_saddr.v6[0], new_saddr.v6[0], BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
         if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct ipv6hdr) + offsetof(struct tcphdr, check), old_saddr.v6[1], new_saddr.v6[1], BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;

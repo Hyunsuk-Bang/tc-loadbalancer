@@ -17,13 +17,6 @@
 
 typedef unsigned int ip4_addr_t;
 typedef unsigned int ip6_addr_t[4];
-union ip_addr TARGET4 = { .v4 = bpf_ntohl(0xc0a80152)};
-union ip_addr TARGET6 = { .v6 = {
-    bpf_ntohl(0x26001700),
-    bpf_ntohl(0x028400d0),
-    bpf_ntohl(0x00000000),
-    bpf_ntohl(0x00000043)
-}};
 
 /*
 Order of members in union ip_addr is important when bpg2go generates go struct
@@ -62,8 +55,8 @@ union ip_addr {
 struct endpoint {
     union ip_addr ip;
     __u16 port;
-    __u8  alive;
-    __u8  ifindex;
+    __u8 alive;
+    __u8 ifindex;
 };
 
 struct tuple {
@@ -72,12 +65,6 @@ struct tuple {
     union ip_addr dst_ip;
     __u16 src_port;
     __u16 dst_port;
-};
-
-struct tcp_state {
-    __u8 tcp_state;
-    __u64 start_time;
-    __u64 last_ack_time;
 };
 
 struct {
@@ -94,14 +81,37 @@ struct {
     __type(value, struct tuple);
 } connections SEC(".maps");
 
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, __u32);
+} round_robin_counter SEC(".maps");
+
+// will be written by user-space program at initialization
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, __u32);
+} round_robin_pool_size SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 10240);
+    __type(key, __u32); // key is index in the roud robin pool
+    __type(value, struct endpoint);
+} round_robin_pool SEC(".maps");
+
 // Revalidate skb data pointers
-static __always_inline int revalidate_data(struct __sk_buff *skb,
-                                           void **data,
-                                           void **data_end,
-                                           void **hdr,
-                                           __u32 offset,
-                                           __u32 size
-                                        ) {
+static __always_inline int revalidate_data(
+    struct __sk_buff *skb,
+    void **data,
+    void **data_end,
+    void **hdr,
+    __u32 offset,
+    __u32 size
+){
     if (bpf_skb_pull_data(skb, skb->len) < 0)
         return -1;
 
