@@ -7,106 +7,156 @@ int lb_tc(struct __sk_buff *skb) {
     void *data_end = (void *)(long)skb->data_end;
     struct ethhdr *eth = data;
     struct iphdr *ip;
+    struct ipv6hdr *ip6;
     struct tcphdr *tcp;
     struct tuple tpl = {};
 
+    __u8 ip_family;
     if (data + sizeof(struct ethhdr) > data_end) return BPF_OK;
-    if (eth->h_proto != bpf_htons(ETH_P_IP)) return BPF_OK;
-
-    /* L3 */
-    ip = data + sizeof(struct ethhdr); 
-    if ((void *)(ip + 1) > data_end) return BPF_OK;
-
-    /* L4 (only do tcp) */
-    void *transh = (void *)ip + (ip->ihl * 4);
-    if (ip->protocol == IPPROTO_TCP) {
-        if (transh + sizeof(struct tcphdr) > data_end) return BPF_OK;
-        tcp = transh;
+    if (eth->h_proto == bpf_htons(ETH_P_IP)) {
+        ip_family = IPFAMILY_IPV4;
+    } else if (eth->h_proto == bpf_htons(ETH_P_IPV6)) {
+        ip_family = IPFAMILY_IPV6;
     } else {
         return BPF_OK;
     }
 
-    tpl.protocol = ip->protocol;
-    tpl.src_ip = ip->saddr;
-    tpl.dst_ip = ip->daddr;
-    tpl.src_port = tcp->source;
-    tpl.dst_port = tcp->dest;
+    __u32 trans_offset = sizeof(struct ethhdr);
+    if (ip_family == IPFAMILY_IPV4) {
+        ip = data + sizeof(struct ethhdr);
+        if (revalidate_data(skb, &data, &data_end, (void **)&ip, sizeof(struct ethhdr), sizeof(struct iphdr)) < 0) return BPF_DROP;
+        tpl.protocol = ip->protocol;
+        tpl.src_ip.v4 = ip->saddr;
+        tpl.dst_ip.v4 = ip->daddr;
+        trans_offset += ip->ihl * 4;
+    } else if (ip_family == IPFAMILY_IPV6) {
+        ip6 = data + sizeof(struct ethhdr);
+        if (revalidate_data(skb, &data, &data_end, (void **)&ip6, sizeof(struct ethhdr), sizeof(struct ipv6hdr)) < 0) return BPF_DROP;
+        tpl.protocol = ip6->nexthdr;
+        __builtin_memcpy(tpl.src_ip.v6, ip6->saddr.s6_addr32, sizeof(ip6->saddr.s6_addr32));
+        __builtin_memcpy(tpl.dst_ip.v6, ip6->daddr.s6_addr32, sizeof(ip6->daddr.s6_addr32));
+        /* TODO: ipv6 may contain multiple chain of headers. For now, we'll consider size of the ipv6 header as 40*/
+        trans_offset += sizeof(struct ipv6hdr);
+    }
 
-    /* ignore SSH / ignore healthcheck endpoint */
+    if (tpl.protocol == IPPROTO_TCP) {
+        tcp = data + trans_offset;
+        if (revalidate_data(skb, &data, &data_end, (void **)&tcp, trans_offset, sizeof(struct tcphdr)) < 0) return BPF_DROP;
+        tpl.src_port = tcp->source;
+        tpl.dst_port = tcp->dest;
+    } else {
+        /* TODO: handle UDP */
+        return BPF_OK;
+    }
+
+    /* ignore SSH */
     if (tpl.dst_port == bpf_htons(22) || tpl.src_port == bpf_htons(22))
         return BPF_OK;
-    if (tpl.dst_port == bpf_htons(31081) || tpl.src_port == bpf_htons(31081))
-        return BPF_OK;
 
+    /*
+    src_ip is VIP
+    */
+    struct endpoint *ep = bpf_map_lookup_elem(&pool, &tpl.src_ip);
+    struct tuple *mapped = bpf_map_lookup_elem(&connections, &tpl);
+    union ip_addr old_saddr;
+    union ip_addr old_daddr;
+    union ip_addr new_saddr;
+    union ip_addr new_daddr;
+    if (ep && mapped && ip_family == IPFAMILY_IPV4) {
+        ip = data + sizeof(struct ethhdr);
+        if (revalidate_data(skb, &data, &data_end, (void **)&ip, sizeof(struct ethhdr), sizeof(struct iphdr)) < 0) return BPF_DROP;
+        old_saddr = tpl.src_ip;
+        old_daddr = tpl.dst_ip;
+        new_saddr = mapped->dst_ip;
+        new_daddr = mapped->src_ip;
 
-    /* endpoint -> lb, do SNAT */
-    struct endpoint *ep = bpf_map_lookup_elem(&endpoints, &tpl.src_ip);
-    if (ep && tpl.dst_ip == bpf_htonl(VIP)) {
-        struct tuple *mapped = bpf_map_lookup_elem(&session, &tpl); 
-        if (!mapped) {
-            return BPF_OK;
-        }
-        __u32 old_saddr = ip->saddr;
-        __u32 old_daddr = ip->daddr;
-        __u32 new_saddr = mapped->dst_ip;
-        __u32 new_daddr = mapped->src_ip;
+        ip->saddr = new_saddr.v4;
+        ip->daddr = new_daddr.v4;
+        if (bpf_l3_csum_replace(skb, sizeof(struct ethhdr) + offsetof(struct iphdr, check), old_saddr.v4, new_saddr.v4, 4) < 0) return BPF_DROP;
+        if (bpf_l3_csum_replace(skb, sizeof(struct ethhdr) + offsetof(struct iphdr, check), old_daddr.v4, new_daddr.v4, 4) < 0) return BPF_DROP;
+        if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct iphdr) + offsetof(struct tcphdr, check), old_saddr.v4, new_saddr.v4, BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
+        if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct iphdr) + offsetof(struct tcphdr, check), old_daddr.v4, new_daddr.v4, BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
+        return bpf_redirect_neigh(skb->ifindex, NULL, 0, 0);
+    } else if (ep && mapped && ip_family == IPFAMILY_IPV6) {
+        ip6 = data + sizeof(struct ethhdr);
+        if (revalidate_data(skb, &data, &data_end, (void **)&ip6, sizeof(struct ethhdr), sizeof(struct ipv6hdr)) < 0) return BPF_DROP;
+        old_saddr = tpl.src_ip;
+        old_daddr = tpl.dst_ip;
+        new_saddr = mapped->dst_ip;
+        new_daddr = mapped->src_ip;
+        __builtin_memcpy(ip6->saddr.s6_addr32, new_saddr.v6, sizeof(ip6->saddr.s6_addr32));
+        __builtin_memcpy(ip6->daddr.s6_addr32, new_daddr.v6, sizeof(ip6->daddr.s6_addr32));
 
-        struct tuple tpl_rev = {};
-        tpl_rev.protocol = mapped->protocol;
-        tpl_rev.src_ip = mapped->src_ip;
-        tpl_rev.dst_ip = old_saddr;
-        tpl_rev.src_port = mapped->src_port;
-        tpl_rev.dst_port = mapped->dst_port;
+        /* IPv6 delete checksum operation to transport layer */
+        if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct ipv6hdr) + offsetof(struct tcphdr, check), old_saddr.v6[0], new_saddr.v6[0], BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
+        if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct ipv6hdr) + offsetof(struct tcphdr, check), old_saddr.v6[1], new_saddr.v6[1], BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
+        if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct ipv6hdr) + offsetof(struct tcphdr, check), old_saddr.v6[2], new_saddr.v6[2], BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
+        if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct ipv6hdr) + offsetof(struct tcphdr, check), old_saddr.v6[3], new_saddr.v6[3], BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
 
-        ip->saddr = new_saddr;
-        ip->daddr = new_daddr;
-        if (set_tcp_state(tcp, &tpl_rev) < 0) {
-            bpf_printk("failed to set tcp state");
-            return BPF_DROP;
-        }
-        if (bpf_l3_csum_replace(skb, sizeof(struct ethhdr) + offsetof(struct iphdr, check), old_saddr, new_saddr, 4) < 0) return BPF_DROP;
-        if (bpf_l3_csum_replace(skb, sizeof(struct ethhdr) + offsetof(struct iphdr, check), old_daddr, new_daddr, 4) < 0) return BPF_DROP; 
-        if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct iphdr) + offsetof(struct tcphdr, check), old_saddr, new_saddr, BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;    
-        if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct iphdr) + offsetof(struct tcphdr, check), old_daddr, new_daddr, BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
+        if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct ipv6hdr) + offsetof(struct tcphdr, check), old_daddr.v6[0], new_daddr.v6[0], BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
+        if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct ipv6hdr) + offsetof(struct tcphdr, check), old_daddr.v6[1], new_daddr.v6[1], BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
+        if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct ipv6hdr) + offsetof(struct tcphdr, check), old_daddr.v6[2], new_daddr.v6[2], BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
+        if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct ipv6hdr) + offsetof(struct tcphdr, check), old_daddr.v6[3], new_daddr.v6[3], BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
         return bpf_redirect_neigh(skb->ifindex, NULL, 0, 0);
     }
-
-    /* TODO 
+    /* TODO
         1. create TCP state machine
-        2. If TCP session is not closed, packet should be routed to same endpoint 
+        2. If TCP session is not closed, packet should be routed to same endpoint
     */
-
-    /* lb -> endpoint,  do DNAT */
-    __u32 base_ip = bpf_htonl(0xc0a80152);
-
-    struct tuple expected_response = {};
-    expected_response.protocol = tpl.protocol;
-    expected_response.src_ip = base_ip;  
-    expected_response.dst_ip = ip->daddr;
-    expected_response.src_port = tpl.dst_port;
-    expected_response.dst_port = tpl.src_port;
-
-    bpf_map_update_elem(&session, &expected_response, &tpl, BPF_ANY);
-    __u32 old_saddr = ip->saddr;
-    __u32 old_daddr = ip->daddr;
-    __u32 new_saddr = ip->daddr;
-    __u32 new_daddr = base_ip;
-    ip->saddr = new_saddr;
-    ip->daddr = new_daddr;
-
-    struct tuple mapped = tpl;
-    mapped.src_ip = old_saddr;
-    mapped.dst_ip = new_daddr;
-    if (set_tcp_state(tcp, &mapped) < 0) {
-        bpf_printk("failed to set tcp state");
-        return BPF_DROP;
+    if (ep) {
+        return BPF_OK;
     }
 
-    if (bpf_l3_csum_replace(skb, sizeof(struct ethhdr) + offsetof(struct iphdr, check), old_saddr, new_saddr, 4) < 0) return BPF_DROP;   
-    if (bpf_l3_csum_replace(skb, sizeof(struct ethhdr) + offsetof(struct iphdr, check), old_daddr, new_daddr, 4) < 0) return BPF_DROP;
-    if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct iphdr) + offsetof(struct tcphdr, check), old_saddr, new_saddr, BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
-    if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct iphdr) + offsetof(struct tcphdr, check), old_daddr, new_daddr, BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
-    return bpf_redirect_neigh(skb->ifindex,NULL, 0, 0);
+    // Store expected resonse from one of the pool
+    struct tuple expected_response = {};
+    if (ip_family == IPFAMILY_IPV4) {
+        ip = data + sizeof(struct ethhdr);
+        if (revalidate_data(skb, &data, &data_end, (void **)&ip, sizeof(struct ethhdr), sizeof(struct iphdr)) < 0) return BPF_DROP;
+        expected_response.protocol = tpl.protocol;
+        expected_response.src_ip.v4 = TARGET4.v4;
+        expected_response.dst_ip.v4 = tpl.dst_ip.v4;
+        expected_response.src_port = tpl.dst_port;
+        expected_response.dst_port = tpl.src_port;
+
+        old_saddr.v4 = ip->saddr;
+        old_daddr.v4 = ip->daddr;
+        new_saddr.v4 = ip->daddr;
+        new_daddr.v4 = TARGET4.v4;
+
+        ip->saddr = new_saddr.v4;
+        ip->daddr = new_daddr.v4;
+        if (bpf_l3_csum_replace(skb, sizeof(struct ethhdr) + offsetof(struct iphdr, check), old_saddr.v4, new_saddr.v4, 4) < 0) return BPF_DROP;
+        if (bpf_l3_csum_replace(skb, sizeof(struct ethhdr) + offsetof(struct iphdr, check), old_daddr.v4, new_daddr.v4, 4) < 0) return BPF_DROP;
+        if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct iphdr) + offsetof(struct tcphdr, check), old_saddr.v4, new_saddr.v4, BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
+        if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct iphdr) + offsetof(struct tcphdr, check), old_daddr.v4, new_daddr.v4, BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
+        bpf_map_update_elem(&connections, &expected_response, &tpl, BPF_ANY);
+        return bpf_redirect_neigh(skb->ifindex,NULL, 0, 0);
+    } else if (ip_family == IPFAMILY_IPV6) {
+        ip6 = data + sizeof(struct ethhdr);
+        if (revalidate_data(skb, &data, &data_end, (void **)&ip6, sizeof(struct ethhdr), sizeof(struct ipv6hdr)) < 0) return BPF_DROP;
+        expected_response.protocol = tpl.protocol;
+        __builtin_memcpy(expected_response.src_ip.v6, TARGET6.v6, sizeof(ip6->saddr.s6_addr32));
+        __builtin_memcpy(expected_response.dst_ip.v6, ip6->daddr.s6_addr32, sizeof(ip6->daddr.s6_addr32));
+        expected_response.src_port = tpl.dst_port;
+        expected_response.dst_port = tpl.src_port;
+        __builtin_memcpy(old_saddr.v6, ip6->saddr.s6_addr32, sizeof(ip6->saddr.s6_addr32));
+        __builtin_memcpy(old_daddr.v6, ip6->daddr.s6_addr32, sizeof(ip6->daddr.s6_addr32));
+        __builtin_memcpy(new_saddr.v6, ip6->daddr.s6_addr32, sizeof(ip6->daddr.s6_addr32));
+        __builtin_memcpy(new_daddr.v6, TARGET6.v6, sizeof(ip6->saddr.s6_addr32));
+
+        if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct ipv6hdr) + offsetof(struct tcphdr, check), old_saddr.v6[0], new_saddr.v6[0], BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
+        if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct ipv6hdr) + offsetof(struct tcphdr, check), old_saddr.v6[1], new_saddr.v6[1], BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
+        if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct ipv6hdr) + offsetof(struct tcphdr, check), old_saddr.v6[2], new_saddr.v6[2], BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
+        if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct ipv6hdr) + offsetof(struct tcphdr, check), old_saddr.v6[3], new_saddr.v6[3], BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
+
+        if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct ipv6hdr) + offsetof(struct tcphdr, check), old_daddr.v6[0], new_daddr.v6[0], BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
+        if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct ipv6hdr) + offsetof(struct tcphdr, check), old_daddr.v6[1], new_daddr.v6[1], BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
+        if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct ipv6hdr) + offsetof(struct tcphdr, check), old_daddr.v6[2], new_daddr.v6[2], BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
+        if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct ipv6hdr) + offsetof(struct tcphdr, check), old_daddr.v6[3], new_daddr.v6[3], BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
+        bpf_map_update_elem(&connections, &expected_response, &tpl, BPF_ANY);
+        return bpf_redirect_neigh(skb->ifindex,NULL, 0, 0);
+    }
+    return BPF_OK;
 }
 
 char LICENSE[] SEC("license") = "GPL";

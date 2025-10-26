@@ -1,0 +1,10 @@
+loadbalancer:
+  kind: round-robin
+  listener:
+    ip: 2600:1700:284:d0::43
+    port: 31080
+    protocol: tcp
+  endpoints:
+  - ip: 2600:1700:284:d0::45
+    port: 31080
+    protocol: tcp

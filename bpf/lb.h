@@ -5,21 +5,62 @@
 #include <bpf/bpf_endian.h>
 #include <linux/if_ether.h>
 #include <linux/ip.h>
+#include <linux/ipv6.h>
 #include <linux/tcp.h>
 #include <linux/udp.h>
 
-#define VIP 0xc0a80155
-#define MAX_TCP_CHECK_WORDS 750 // 32 * 2 = 64 bytes max TCP header + payload to csum
+#define IPFAMILY_IPV4 4
+#define IPFAMILY_IPV6 6
+
 #define IPPROTO_TCP 6
 #define IPPROTO_UDP 17
 
-#define TCP_CLOSED 0
-#define TCP_SYN_SENT 1
-#define TCP_ESTABLISHED 2
-#define TCP_HALF_CLOSED 3 
+typedef unsigned int ip4_addr_t;
+typedef unsigned int ip6_addr_t[4];
+union ip_addr TARGET4 = { .v4 = bpf_ntohl(0xc0a80152)};
+union ip_addr TARGET6 = { .v6 = {
+    bpf_ntohl(0x26001700),
+    bpf_ntohl(0x028400d0),
+    bpf_ntohl(0x00000000),
+    bpf_ntohl(0x00000043)
+}};
+
+/*
+Order of members in union ip_addr is important when bpg2go generates go struct
+putting ipv4 first yields the following go struct:
+type lbEndpoint struct {
+    _  structs.HostLayout
+    Ip struct {
+        _  structs.HostLayout
+        V4 lbIp4AddrT
+        _  [12]byte
+    }
+    Port    uint16
+    Alive   uint8
+    Ifindex uint8
+}
+this would make it harder to access ipv6 address since we cannot access _ [12]byte directly.
+
+By putting ipv6 first, bpf2go generates:
+type lbEndpoint struct {
+    _  structs.HostLayout
+    Ip struct {
+        _  structs.HostLayout
+        V6 lbIp6AddrT
+    }
+    Port    uint16
+    Alive   uint8
+    Ifindex uint8
+}
+which makes it easier to access both ipv4 and ipv6 address.
+*/
+union ip_addr {
+    ip6_addr_t v6; // IPv6 address (16 bytes)
+    ip4_addr_t v4;  // IPv4 address (4 bytes)
+} ip_addr_t;
 
 struct endpoint {
-    __u32 ip;
+    union ip_addr ip;
     __u16 port;
     __u8  alive;
     __u8  ifindex;
@@ -27,8 +68,8 @@ struct endpoint {
 
 struct tuple {
     __u8 protocol;
-    __u32 src_ip;
-    __u32 dst_ip;
+    union ip_addr src_ip;
+    union ip_addr dst_ip;
     __u16 src_port;
     __u16 dst_port;
 };
@@ -42,31 +83,17 @@ struct tcp_state {
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 16);
-    __type(key, __u32); // key is ip address of endpoint
+    __type(key, union ip_addr); // key is ip address of endpoint
     __type(value, struct endpoint);
-} endpoints SEC(".maps");
-
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 10240);
-    __type(key, struct tuple); // simplified session key
-    __type(value, struct tuple); // mapped endpoint
-} session SEC(".maps");
-
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 10240);
-    __type(key, struct tuple); 
-    __type(value, __u64);
-} session_timestamp SEC(".maps");
+} pool SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 10240);
     __type(key, struct tuple);
-    __type(value, struct tcp_state);
-} tcp_state_map SEC(".maps");
- 
+    __type(value, struct tuple);
+} connections SEC(".maps");
+
 // Revalidate skb data pointers
 static __always_inline int revalidate_data(struct __sk_buff *skb,
                                            void **data,
@@ -85,47 +112,15 @@ static __always_inline int revalidate_data(struct __sk_buff *skb,
     return 0;
 }
 
-static __always_inline int set_tcp_state(struct tcphdr *tcphdr, struct tuple *tpl) {
-    __u64 tstmp = bpf_ktime_get_ns();
-
-    struct tcp_state *ts = (struct tcp_state*)bpf_map_lookup_elem(&tcp_state_map, tpl);
-    if (!ts) {
-        struct tcp_state new_ts = {};
-        new_ts.tcp_state = TCP_CLOSED;
-        new_ts.start_time = tstmp;
-        new_ts.last_ack_time = 0;
-        if (bpf_map_update_elem(&tcp_state_map, tpl, &new_ts, BPF_ANY) < 0) {
-            bpf_printk("Failed to insert new tcp_state");
-            return -1;
-        }
+// Compare two ip_addr unions based on protocol
+// return 0 if equal, non-zero otherwise
+static __always_inline int addr_cmp(union ip_addr *a, union ip_addr *b, __u8 ip_family) {
+    if (ip_family == IPFAMILY_IPV4 && a->v4 == b->v4) {
+        return 0;
+    } else if (ip_family == IPFAMILY_IPV6) {
+        return __builtin_memcmp(a->v6, b->v6, sizeof(a->v6));
     }
-
-    ts = bpf_map_lookup_elem(&tcp_state_map, tpl);
-    if (!ts) { // still need to check this to avoid verifier issues
-        bpf_printk("Failed to lookup tcp_state after insert");
-        return -1;
-    }
-
-    else if (tcphdr->fin) {
-        ts->tcp_state = TCP_HALF_CLOSED;
-        return bpf_map_update_elem(&tcp_state_map, tpl, ts, BPF_ANY);
-    }
-
-    // Active open
-    if (tcphdr->syn && !tcphdr->ack) {
-        ts->tcp_state = TCP_SYN_SENT; 
-    }
-
-    // Established SYN->, <-SYN,ACK
-    else if (tcphdr->syn && tcphdr->ack) {
-        ts->tcp_state = TCP_ESTABLISHED; 
-    }
-
-    // Normal ACK packet without SYN
-    else if (tcphdr->ack && !tcphdr->syn && !tcphdr->fin) { 
-        ts->last_ack_time = tstmp;
-        ts->tcp_state = TCP_ESTABLISHED;
-    }
-    return bpf_map_update_elem(&tcp_state_map, tpl, ts, BPF_ANY);
+    return -1;
 }
+
 #endif  // LB_H
