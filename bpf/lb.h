@@ -82,6 +82,13 @@ struct {
 } connections SEC(".maps");
 
 struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 10240);
+    __type(key, struct tuple);
+    __type(value, __u64);
+} connections_tstmp SEC(".maps");
+
+struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
     __uint(max_entries, 1);
     __type(key, __u32);
@@ -103,7 +110,10 @@ struct {
     __type(value, struct endpoint);
 } round_robin_pool SEC(".maps");
 
-// Revalidate skb data pointers
+// revalidate data make sure hdr is within data and data_end
+// returns 0 on success, -1 on failure
+// Some bpf helpers like bpf_l3_csum_replace may invalidate skb data pointers after modification
+// so we need to revalidate the pointers before accessing the headers again
 static __always_inline int revalidate_data(
     struct __sk_buff *skb,
     void **data,

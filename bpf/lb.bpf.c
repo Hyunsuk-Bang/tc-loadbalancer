@@ -5,6 +5,7 @@ SEC("tc")
 int lb_tc(struct __sk_buff *skb) {
     void *data = (void *)(long)skb->data;
     void *data_end = (void *)(long)skb->data_end;
+    __u64 tstmp = bpf_ktime_get_ns();
     struct ethhdr *eth = data;
     struct iphdr *ip;
     struct ipv6hdr *ip6;
@@ -61,7 +62,8 @@ int lb_tc(struct __sk_buff *skb) {
     union ip_addr old_daddr;
     union ip_addr new_saddr;
     union ip_addr new_daddr;
-    if (ep && mapped && ip_family == IPFAMILY_IPV4) {
+    //if (ep && mapped && ip_family == IPFAMILY_IPV4) {
+    if (mapped && ip_family == IPFAMILY_IPV4) {
         ip = data + sizeof(struct ethhdr);
         if (revalidate_data(skb, &data, &data_end, (void **)&ip, sizeof(struct ethhdr), sizeof(struct iphdr)) < 0) return BPF_DROP;
         old_saddr = tpl.src_ip;
@@ -76,7 +78,7 @@ int lb_tc(struct __sk_buff *skb) {
         if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct iphdr) + offsetof(struct tcphdr, check), old_saddr.v4, new_saddr.v4, BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
         if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct iphdr) + offsetof(struct tcphdr, check), old_daddr.v4, new_daddr.v4, BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
         return bpf_redirect_neigh(skb->ifindex, NULL, 0, 0);
-    } else if (ep && mapped && ip_family == IPFAMILY_IPV6) {
+    } else if (mapped && ip_family == IPFAMILY_IPV6) {
         ip6 = data + sizeof(struct ethhdr);
         if (revalidate_data(skb, &data, &data_end, (void **)&ip6, sizeof(struct ethhdr), sizeof(struct ipv6hdr)) < 0) return BPF_DROP;
         old_saddr = tpl.src_ip;
@@ -101,6 +103,8 @@ int lb_tc(struct __sk_buff *skb) {
     // packet is from one of the pool endpoints to LB, However, no mapping found.
     if (ep) return BPF_OK;
 
+    // before selecting new endpoint, need to check if there is existing mapping
+    // TODO: timestamp check to remove stale entries
     __u32 *rr_counter;
     __u32 *rr_pool_size;
     __u32 rr_counter_key = 0;
@@ -149,6 +153,7 @@ int lb_tc(struct __sk_buff *skb) {
         if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct iphdr) + offsetof(struct tcphdr, check), old_saddr.v4, new_saddr.v4, BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
         if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct iphdr) + offsetof(struct tcphdr, check), old_daddr.v4, new_daddr.v4, BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
         bpf_map_update_elem(&connections, &expected_response, &tpl, BPF_ANY);
+        bpf_map_update_elem(&connections, &tpl, &expected_response, BPF_ANY);
         return bpf_redirect_neigh(skb->ifindex,NULL, 0, 0);
     } else if (ip_family == IPFAMILY_IPV6) {
         ip6 = data + sizeof(struct ethhdr);
@@ -173,6 +178,7 @@ int lb_tc(struct __sk_buff *skb) {
         if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct ipv6hdr) + offsetof(struct tcphdr, check), old_daddr.v6[2], new_daddr.v6[2], BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
         if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + sizeof(struct ipv6hdr) + offsetof(struct tcphdr, check), old_daddr.v6[3], new_daddr.v6[3], BPF_F_PSEUDO_HDR | 4) < 0) return BPF_DROP;
         bpf_map_update_elem(&connections, &expected_response, &tpl, BPF_ANY);
+        bpf_map_update_elem(&connections, &tpl, &expected_response, BPF_ANY);
         return bpf_redirect_neigh(skb->ifindex,NULL, 0, 0);
     }
     return BPF_OK;
